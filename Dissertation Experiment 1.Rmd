@@ -1,0 +1,681 @@
+---
+title: "S64 Long SOA Sem Pri Orthographic Facilitation"
+output:
+  word_document: default
+  html_notebook: default
+  pdf_document: default
+  html_document: default
+---
+
+
+#Pre-Processing
+
+##Importing and examining the trial-level dataset
+```{r Importing_and_examining}
+##Import
+###########
+#Imports the data file and saves it into the global environment.
+#Gets rid of any extra columns with an X
+#Directory and File_Name should be in " " 
+
+#directory is "C:/Users/Alexander/Desktop/OrthFacil/RCode/"
+Importing_and_examining <- function(directory, File_Name){
+  setwd(directory) #set working directory to folder with files
+  experiment <- list.files(pattern="*.txt") #Get name of the experiment data file
+  filepath <- file.path(directory, experiment) #Get filepath
+  Compiled <- read.delim(filepath, header =TRUE) #Import file specified by filepath
+  assign(File_Name, Compiled, envir = .GlobalEnv)
+  return(str(Compiled[1:10,]))
+}
+
+Importing_and_examining("C:/Users/Alexander/Desktop/S64_LongSOASemPri_OrthFacil/SemPri_OrthFacil_RCode", "Compiled")
+
+```
+
+
+##The Histogram for all correct responses:
+```{r RT_distribution}
+library(ggplot2)
+#Shows a frequency histogram of the response RTs
+ggplot(Compiled, aes(x=RT)) + #Change rt to whatever the dependent variable is!
+           geom_histogram(breaks=seq(0, 2000, by=25))
+
+
+```
+
+##Trial Classification
+```{r Trial_Classification}
+##3. Trial Classification
+#########################
+#File_Name should be in " "
+# 1-error (just incorrect responses)
+# 2-correct response within cutoff range
+# 3-outlier (correct response just too slow, or no response) 
+Trial_classification <- function(input_file,File_Name, time_out, lower_RT, upper_RT){
+  input_file$Trial_Criterion[input_file$RT < 0 & input_file$RT > time_out] <- 1 #error
+  input_file$Trial_Criterion[input_file$RT > lower_RT & input_file$RT < upper_RT] <- 2 #correct response
+  input_file$Trial_Criterion[input_file$RT == time_out | 
+                               (input_file$RT < lower_RT & input_file$RT > 0)|
+                               input_file$RT > upper_RT] <- 3 #outliers and no response
+  assign(File_Name, input_file, envir = .GlobalEnv)
+  return(str(input_file[1:10,]))
+}
+Trial_classification(Compiled,"Compiled",-2500,250,1750)
+#When the variable information is generated, recode the variable classes as necessary
+
+```
+
+```{r Correcting Columns}
+#Recode the column variable types as necessary
+cols <- c("Subject", "Item", "Trial_Criterion", "List")
+Compiled[,cols] <- lapply(Compiled[,cols], as.factor)
+
+#Get rid of any empty columns
+Compiled <-Compiled[, -grep("^X", colnames(Compiled))] 
+str(Compiled[1:10,])
+```
+
+#Pivot Table with summary of subject errors
+```{r Pivot Table Summary of Subject Errors}
+library(rpivotTable)
+subject_errors<- rpivotTable(data = Compiled,
+                      rows = c("Group","Subject"), #list was counterbalance
+                      cols = c("Lexicality","Trial_Criterion"),  
+                      vals = "Trial_Criterion",
+                      aggregatorName = "Count",
+                      rendererName = "Error Rates",
+                      width="100%", 
+                      height="100px"
+  )
+print(subject_errors)
+```
+
+#Pivot Table with summary of item errors
+```{r Pivot Table Summary of Item Errors}
+library(rpivotTable)
+item_errors<- rpivotTable(data = Compiled,
+                      rows = c("Lexicality","Target"), #list was counterbalance
+                      cols = c("Trial_Criterion"),  
+                      vals = "Trial_Criterion",
+                      aggregatorName = "Count",
+                      rendererName = "Error Rates",
+                      width="100%", 
+                      height="100px"
+  )
+print(item_errors)
+
+##Error Rates Prior to Subject and Trial Removal
+```
+
+
+##Removing Subjects, Items and Trials
+```{r Trial_Cleaning}
+##Removing Subjects and Trials
+#################################
+#Removes a list of specified subjects 
+#File_Name should be in " "
+Trial_Cleaning <- function(input_file,Clean_File,Error_File,PreAnalysis_File,...){
+  removed_SubjectsORItems <- list(...) #list of subjects to remove
+  tmp1 <- input_file[ ! input_file$Subject %in% removed_SubjectsORItems, ] #removing the subjects
+  tmp2 <- tmp1[ ! tmp1$Target %in% removed_SubjectsORItems,] #Revmoing the items
+  practice_trials <- which(with(tmp2, Lexicality == "practice")) #Defining Practice Trials
+  tmp3 <- tmp2[-practice_trials,] #removing the practice trials
+  assign(PreAnalysis_File, tmp3, envir = .GlobalEnv) #File with bad subjects and items removed but with outliers and errors present. This is for counting the number of error and outlier trials
+  outlier_trials <- which(with(tmp3, Trial_Criterion == 3)) #Defining Outlier Trials
+  tmp4 <- tmp3[-outlier_trials,] #Revmoing the outlier trials
+  assign(Error_File, tmp4, envir = .GlobalEnv) #Error file has incorrect and correct responses
+  error_trials <- which(with(tmp4, Trial_Criterion == 1)) #list of rows to remove
+  tmp5 <- tmp4[-error_trials,] #Removing Error Trials
+  assign(Clean_File, tmp5, envir = .GlobalEnv)
+  subject_prelim <- aggregate(RT ~ Group + Subject, data=tmp5, mean, na.rm=TRUE)
+  return(subject_prelim)
+}
+Trial_Cleaning(Compiled,"Clean","Errors","PreAnalysis", 2,7,9,101,12,1038,21,22,1007,1011,1004,1008,1016)
+```
+
+#Pivot Table with Clean summary of subject errors
+```{r Pivot Table Summary of Subject Errors}
+library(rpivotTable)
+subject_errors<- rpivotTable(data = PreAnalysis,
+                      rows = c("Group","Subject"), #list was counterbalance
+                      cols = c("Lexicality","Trial_Criterion"),  
+                      vals = "Trial_Criterion",
+                      aggregatorName = "Count",
+                      rendererName = "Error Rates",
+                      width="100%", 
+                      height="100px"
+  )
+print(subject_errors)
+```
+
+
+```{r, eval=FALSE, include=FALSE}
+##Writing Intermediate File
+##############################
+#Writes file with cleaned data
+#Directory is "C:/Users/Alexander/Desktop/Intermediates/"
+#File_Name should include a .txt
+Clean_Write <- function(input_file, File_Name, directory){
+  filepath <- file.path(directory, File_Name)
+  write.table(input_file, filepath, sep="\t")
+  
+}
+```
+
+
+#Results Summary
+
+##Creating Variables of Interest to summarize
+```{r Summary Variables}
+##############
+#SUMMARY_STATS
+##############
+
+#Basic Ex-Gaussian Functions
+mux <- function(x, n = length(x)) { # This gives me only the mu
+	k <- start <- c(mu = NaN, sigma = NaN, tau = NaN)
+	k[1] <- mean(x)
+	xdev <- x - k[1]
+	k[2] <- sum(xdev^2)/(n-1)
+	k[3] <- sum(xdev^3)/(n-1)
+	if (k[3] > 0)
+		start[3] <- (k[3]/2)^(1/3)
+	else start[3] <- 0.8*sd(x)
+	start[2] <- sqrt(abs(k[2] - start[3]^2))
+	start[1] <- k[1] - start[3]
+	return(start[1])
+}
+
+sigx <- function(x, n = length(x)) { # THIS GIVES ME ONLY THE SIGMA
+	k <- start <- c(mu = NaN, sigma = NaN, tau = NaN)
+	k[1] <- mean(x)
+	xdev <- x - k[1]
+	k[2] <- sum(xdev^2)/(n-1)
+	k[3] <- sum(xdev^3)/(n-1)
+	if (k[3] > 0)
+		start[3] <- (k[3]/2)^(1/3)
+	else start[3] <- 0.8*sd(x)
+	start[2] <- sqrt(abs(k[2] - start[3]^2))
+	start[1] <- k[1] - start[3]
+	return(start[2])
+}
+
+taux <- function(x, n = length(x)) { # THIS GIVES ME ONLY THE TAU
+	k <- start <- c(mu = NaN, sigma = NaN, tau = NaN)
+	k[1] <- mean(x)
+	xdev <- x - k[1]
+	k[2] <- sum(xdev^2)/(n-1)
+	k[3] <- sum(xdev^3)/(n-1)
+	if (k[3] > 0)
+		start[3] <- (k[3]/2)^(1/3)
+	else start[3] <- 0.8*sd(x)
+	start[2] <- sqrt(abs(k[2] - start[3]^2))
+	start[1] <- k[1] - start[3]
+	return(start[3])
+}
+
+#Other Functions
+
+SE <- function(x){se = sd(x)/sqrt(length(x))}
+
+ErrorRate <- function(x){
+  ER = length(which(x == 1))/length(which(x == 1| x ==2))
+}
+
+```
+
+##Creating Data Frame Summaries
+Subject and item summaries for words and errors
+```{r Summary Functions}
+#library(data.table)
+#Summary Definition Protocols
+
+Subject_RT <- list(Clean$Subject, Clean$Group, Clean$Sem_Rel, Clean$Orth_Rel, Clean$Lexicality)
+Subject_Errors <- list (Errors$Subject, Errors$Group, Errors$Sem_Rel, Errors$Orth_Rel, Errors$Lexicality)
+
+Item_RT <- list(Clean$Target, Clean$List, Clean$Sem_Rel, Clean$Orth_Rel, Clean$Lexicality)
+Item_Errors <- list(Errors$Target, Errors$List, Errors$Sem_Rel, Errors$Orth_Rel, Errors$Lexicality)
+
+
+##Subject means
+Subject <- aggregate(RT ~ Subject + Group + Sem_Rel + Orth_Rel + Lexicality, data = Clean, FUN = mean, na.rm = TRUE) #RT Means
+Subject$SE <- na.omit(sapply(split(Clean$RT, Subject_RT), SE)) #SE
+Subject$Mu <- na.omit(sapply(split(Clean$RT, Subject_RT), mux)) #Mu 
+Subject$Sigma <- na.omit(sapply(split(Clean$RT, Subject_RT), sigx)) #Sigma
+Subject$Tau <- na.omit(sapply(split(Clean$RT, Subject_RT), taux)) #Tau
+Subject$ErrorRate <- na.omit(sapply(split(Errors$Trial_Criterion, Subject_Errors), ErrorRate)) #Error Rate
+
+##Item means
+Item <- aggregate(RT ~ Target + List + Sem_Rel + Orth_Rel + Lexicality, data = Clean, FUN = mean, na.rm = TRUE) #RT Means
+Item$SE <- na.omit(sapply(split(Clean$RT, Item_RT), SE)) #SE
+Item$Mu <- na.omit(sapply(split(Clean$RT, Item_RT), mux)) #Mu 
+Item$Sigma <- na.omit(sapply(split(Clean$RT, Item_RT), sigx)) #Sigma
+Item$Tau <- na.omit(sapply(split(Clean$RT, Item_RT), taux)) #Tau
+Item$ErrorRate <- na.omit(sapply(split(Errors$Trial_Criterion, Item_Errors), ErrorRate)) #Error Rate
+
+#Condition-level means
+Conditions <- aggregate(cbind(RT, SE, Mu, Sigma, Tau, ErrorRate) ~ Sem_Rel + Orth_Rel + Lexicality, data = Subject, FUN = mean)
+print(Conditions)
+```
+
+##Splitting Latency and Error files into Words and Non-words
+```{r File_Split}
+##Splitting File 
+###################
+#Always split words/nonwords firts!!!
+#File_Name1/2, subset1/2, and criterion_variable should be in " "
+
+File_Split <- function(input_file, criterion_variable, File_Name1,subset1, File_Name2,subset2){
+  tmp1 <- input_file[input_file[criterion_variable]==subset1,]
+  assign(File_Name1, tmp1, envir = .GlobalEnv)
+  tmp2 <- input_file[input_file[criterion_variable]==subset2,]
+  assign(File_Name2, tmp2, envir = .GlobalEnv)
+  
+}
+
+##Subject and Item Latency and Error Analyses
+#Data Frames for Subject Latency and Error Summaries
+File_Split(Subject, "Lexicality", "Word_Subject", "word", "Nonword_Subject", "nonword")
+#Data frames for Item Latency and Error Summaries
+File_Split(Item, "Lexicality", "Word_Item", "word", "Nonword_Item", "nonword")
+
+##Trial Level Data for GLMER analyses and Quartile Analyses
+#Clean Datafrmaes
+File_Split(Clean, "Lexicality", "WordRT_Trial", "word", "NonwordRT_Trial", "nonword")
+#Error Dataframes
+File_Split(Errors, "Lexicality", "WordErrors_Trial", "word", "NonwordErrors_Trial", "nonword")
+
+
+```
+
+
+#========
+#Analyses
+#========
+
+##ANOVAs
+
+###Latencies
+```{r latency ANOVAs}
+library(afex)
+library(apa)
+library(emmeans)
+
+#Word Subject-Level ANOVA
+
+FsW <-aov_ez("Subject", #Subject variable 
+            "RT", #dependent variable
+            Word_Subject, #dataset
+            between = c("Group"),
+            within = c("Sem_Rel","Orth_Rel"),
+            #afex_options(correction_aov = "none"), #Correction of d.f.!!!
+            type = 3,
+            factorize = TRUE)
+FsW_omnibus <- anova(FsW)
+print("Word Subject-Level ANOVA")
+print(FsW_omnibus)
+anova_apa(FsW)
+
+mFsW <- emmeans(FsW,~Sem_Rel|Orth_Rel)
+mFsW
+pairs(mFsW)
+
+
+
+#Word Item-Level ANOVA
+
+FiW <-aov_ez("Target", #Subject variable 
+            "RT", #dependent variable
+            Word_Item, #dataset
+            between = c("List"),
+            within = c("Sem_Rel","Orth_Rel"),
+            #afex_options(correction_aov = "none"), #Correction of d.f.!!!
+            type = 3,
+            factorize = TRUE)
+
+
+FiW_omnibus <- anova(FiW)
+print("Word Item-Level ANOVA")
+print(FiW_omnibus)
+anova_apa(FiW)
+
+#Nonword Subject-Level ANOVA
+
+FsNw <-aov_ez("Subject", #Subject variable 
+            "RT", #dependent variable
+            Nonword_Subject, #dataset
+            between = c("Group"),
+            within = c("Orth_Rel"),
+            #afex_options(correction_aov = "none"), #Correction of d.f.!!!
+            type = 3,
+            factorize = TRUE)
+FsNw_omnibus <- anova(FsNw)
+print("Nonword Subject-Level ANOVA")
+print(FsNw_omnibus)
+anova_apa(FsNw)
+
+#Nonword Item-Level ANOVA
+
+FiNw <-aov_ez("Target", #Subject variable 
+            "RT", #dependent variable
+            Nonword_Item, #dataset
+            between = c("List"),
+            within = c("Orth_Rel"),
+            #afex_options(correction_aov = "none"), #Correction of d.f.!!!
+            type = 3,
+            factorize = TRUE)
+
+
+FiNw_omnibus <- anova(FiNw)
+print("Nonword Subject-Level ANOVA")
+print(FiNw_omnibus)
+anova_apa(FiNw)
+
+```
+
+###Errors
+```{r Error Rate ANOVAs}
+library(afex)
+library(apa)
+library(emmeans)
+#Word Subject-Level ANOVA
+
+FsW <-aov_ez("Subject", #Subject variable 
+            "ErrorRate", #dependent variable
+            Word_Subject, #dataset
+            between = c("Group"),
+            within = c("Sem_Rel","Orth_Rel"),
+            #afex_options(correction_aov = "none"), #Correction of d.f.!!!
+            type = 3,
+            factorize = TRUE)
+FsW_omnibus <- anova(FsW)
+print("Word Subject-Level ANOVA")
+print(FsW_omnibus)
+anova_apa(FsW)
+
+mFsW <- emmeans(FsW,~Sem_Rel|Orth_Rel)
+mFsW
+pairs(mFsW)
+
+
+#Word Item-Level ANOVA
+
+FiW <-aov_ez("Target", #Subject variable 
+            "ErrorRate", #dependent variable
+            Word_Item, #dataset
+            between = c("List"),
+            within = c("Sem_Rel","Orth_Rel"),
+            #afex_options(correction_aov = "none"), #Correction of d.f.!!!
+            type = 3,
+            factorize = TRUE)
+
+
+FiW_omnibus <- anova(FiW)
+print("Word Item-Level ANOVA")
+print(FiW_omnibus)
+anova_apa(FiW)
+
+#Nonword Subject-Level ANOVA
+
+FsNw <-aov_ez("Subject", #Subject variable 
+            "ErrorRate", #dependent variable
+            Nonword_Subject, #dataset
+            between = c("Group"),
+            within = c("Orth_Rel"),
+            #afex_options(correction_aov = "none"), #Correction of d.f.!!!
+            type = 3,
+            factorize = TRUE)
+FsNw_omnibus <- anova(FsNw)
+print("Nonword Subject-Level ANOVA")
+print(FsNw_omnibus)
+anova_apa(FsNw)
+
+#Nonword Item-Level ANOVA
+
+FiNw <-aov_ez("Target", #Subject variable 
+            "ErrorRate", #dependent variable
+            Nonword_Item, #dataset
+            between = c("List"),
+            within = c("Orth_Rel"),
+            #afex_options(correction_aov = "none"), #Correction of d.f.!!!
+            type = 3,
+            factorize = TRUE)
+
+
+FiNw_omnibus <- anova(FiNw)
+print("Nonword Subject-Level ANOVA")
+print(FiNw_omnibus)
+anova_apa(FiNw)
+
+```
+
+##GLME
+
+###Latencies
+```{r GLMER on Latencies}
+#TROUBLESHOOTING: check out this page: http://rpubs.com/bbolker/lme4trouble1
+
+library(lme4)
+library(car)
+
+options(contrasts = c("contr.sum","contr.poly"))
+
+
+#Inverse Gaussian Distribution
+wordRT_invgauss <- glmer(RT ~ Orth_Rel + 
+                           (1|Target) + (1|Subject), 
+                               data = WordRT_Trial, 
+                               family = inverse.gaussian(link="identity"))
+summary(wordRT_invgauss)
+#Anova(wordRT_invgauss)
+
+
+#restart from previous fit
+
+#ss <- getME(wordRT_invgauss,c("theta","fixef"))
+#wordRT_invgauss2 <- update(wordRT_invgauss,start=ss,control=glmerControl(optCtrl=list(maxfun=1e9)))
+#summary(wordRT_invgauss2)
+
+
+```
+
+###Errors 
+
+```{r echo=TRUE}
+library(lme4)
+options(contrasts = c("contr.sum","contr.poly"))
+
+#Obtaining the maximal model (This is the most complex model which could still converge)
+wordError_Binomial <- glmer(Trial_Criterion ~ Orth_Rel +    #Fixed effects and their interactions
+                   (1|Subject) + (1|Target), #Random effects with random intercepts   
+                   data = WordErrors_Trial,
+                   family = "binomial",
+                   nAGO = 1
+                   )
+summary(wordError_Binomial)
+
+```
+
+
+
+#=================
+#Quantile Analyses
+#=================
+
+##Setting up Quartile Analyses
+```{r Quartile Assign}
+
+Quantile_Assign <- function(input_file, File_Name, Var, QuantileLabel, QuantileSize, MaxRank){
+  input_file$rank <- ave(input_file$RT, input_file$Subject, input_file[,Var], FUN = rank)
+  input_file$rank <- as.integer(input_file$rank)
+  i <- 1
+  while(i*QuantileSize < MaxRank){
+    input_file$tmp[input_file$rank >=(i-1)*QuantileSize + 1 & input_file$rank <= QuantileSize*i] <- i
+    i <- i + 1
+  }
+  input_file[ ,QuantileLabel] <- input_file$tmp
+  input_file <- input_file[ , !names(input_file) %in% c("tmp","rank")] 
+  assign(File_Name, input_file, envir = .GlobalEnv)
+}
+
+WordErrors_TrialQ <- WordErrors_Trial
+WordRT_TrialQ<- WordRT_Trial
+
+Quantile_Assign(WordRT_TrialQ,"WordRT_TrialQ", "Orth_Rel", "OrthRelQ", 7, 36)
+Quantile_Assign(WordErrors_TrialQ,"WordErrors_TrialQ", "Orth_Rel", "OrthRelQ", 7, 36)
+
+Quantile_Assign(WordRT_TrialQ,"WordRT_TrialQ", "Sem_Rel", "SemRelQ", 7, 36)
+Quantile_Assign(WordErrors_TrialQ,"WordErrors_TrialQ", "Sem_Rel", "SemRelQ", 7, 36)
+
+WordRT_Trial_OrthRelQ <- subset(WordRT_TrialQ, OrthRelQ >=1 & OrthRelQ <=4)
+WordRT_Trial_SemRelQ <- subset(WordRT_TrialQ, SemRelQ >=1 & SemRelQ <=4)
+
+```
+
+##ANOVAs
+
+###Latencies
+```{r Quartile Latency Analyses}
+library(afex)
+library(emmeans)
+library(apa)
+
+##OrthRelQ Latencies
+####################
+
+#Subject Analysis
+FsOrthQ <-aov_ez("Subject", #Subject variable 
+            "RT", #dependent variable
+            WordRT_Trial_OrthRelQ, #dataset
+            within = c("Orth_Rel","OrthRelQ"),
+            between = c("Group"),
+            correction = "none", #Correction of d.f.!!!
+            type = 3,
+            factorize = TRUE)
+print("Subject-Level ANOVA")
+print(anova(FsOrthQ))
+anova_apa(FsOrthQ)
+MsOrthQ <- emmeans(FsOrthQ, ~ Orth_Rel|OrthRelQ)
+
+#Item Analysis
+FiOrthQ <-aov_ez("Target", #Subject variable 
+            "RT", #dependent variable
+            WordRT_Trial_OrthRelQ, #dataset
+            within = c("Orth_Rel","OrthRelQ"),
+            between = c("List"),
+            correction = "none", #Correction of d.f.!!!
+            type = 3,
+            factorize = TRUE)
+print("Item-Level ANOVA")
+print(anova(FiOrthQ))
+anova_apa(FiOrthQ)
+MsOrthQ <- emmeans(FiOrthQ, ~ Orth_Rel|OrthRelQ)
+
+##SemRelQ Latencies
+####################
+
+#Subject Analysis
+FsSemQ <-aov_ez("Subject", #Subject variable 
+            "RT", #dependent variable
+            WordRT_Trial_SemRelQ, #dataset
+            within = c("Sem_Rel","SemRelQ"),
+            between = c("Group"),
+            correction = "none", #Correction of d.f.!!!
+            type = 3,
+            factorize = TRUE)
+print("Subject-Level ANOVA")
+print(anova(FsSemQ))
+anova_apa(FsSemQ)
+MsOrthQ <- emmeans(FsSemQ, ~ Sem_Rel|SemRelQ)
+
+#Item Analysis
+FiSemQ <-aov_ez("Target", #Subject variable 
+            "RT", #dependent variable
+            WordRT_Trial_SemRelQ, #dataset
+            within = c("Sem_Rel","SemRelQ"),
+            between = c("List"),
+            correction = "none", #Correction of d.f.!!!
+            type = 3,
+            factorize = TRUE)
+print("Item-Level ANOVA")
+print(anova(FiSemQ))
+anova_apa(FiSemQ)
+MsOrthQ <- emmeans(FiSemQ, ~ Sem_Rel|SemRelQ)
+
+```
+
+```{r}
+library(ggplot2)
+library(ggrepel)
+library(gridExtra)
+
+
+OrthRelPlot <- emmip(FsOrthQ, Orth_Rel ~ OrthRelQ, CIs = TRUE, engine = "ggplot", plotit = FALSE)
+OrthRelPlot$tvar <- as.factor(OrthRelPlot$tvar)
+levels(OrthRelPlot$tvar) <- c(levels(OrthRelPlot$tvar), "Neighbor")
+levels(OrthRelPlot$tvar) <- c(levels(OrthRelPlot$tvar), "Non-neighbor")
+OrthRelPlot[OrthRelPlot == "related"] <- "Neighbor"
+OrthRelPlot[OrthRelPlot == "unrelated"] <- "Non-neighbor"
+print(OrthRelPlot)
+
+SemRelPlot <- emmip(FsSemQ, Sem_Rel ~ SemRelQ, CIs = TRUE, engine = "ggplot", plotit = FALSE)
+SemRelPlot$tvar <- as.factor(SemRelPlot$tvar)
+levels(SemRelPlot$tvar) <- c(levels(SemRelPlot$tvar), "Related")
+levels(SemRelPlot$tvar) <- c(levels(SemRelPlot$tvar), "Unrelated")
+SemRelPlot[SemRelPlot == "related"] <- "Related"
+SemRelPlot[SemRelPlot == "unrelated"] <- "Unrelated"
+print(SemRelPlot)
+
+Theme_Add <- theme_bw(base_size = 12, base_family = "") +
+  theme(plot.title = element_text(color = "black",size=12)) +
+  theme(panel.border = element_blank(), panel.grid.major = element_blank(),panel.grid.minor = element_blank()) + 
+  theme(axis.line = element_line(colour = "black", linetype = "solid")) +
+  theme(legend.justification=c(1,0),legend.position=c(1,0.05), 
+        legend.title=element_blank(),
+        legend.text=element_text(colour="black", size=12),
+        legend.key = element_rect((fill = NA))) +
+  theme(axis.text.x = element_text(color = "black",size=12),
+        axis.text.y = element_text(color = "black",size=12))
+
+QuartileLabels <- c("1", "2", "3", "4" )
+
+
+OrthRelQ_Plot <- ggplot(data = OrthRelPlot, aes(x = xvar, y=yvar, group = tvar))+
+  geom_line(aes(linetype=tvar), size=1) +
+  geom_point() +
+  geom_errorbar(aes(ymin=LCL, ymax=UCL), width=.1) +
+  geom_text_repel(aes(label=format(OrthRelPlot$yvar, digits=3)),
+                  size = 4,direction = "y", hjust = 2, segment.colour = NA) +
+  labs(title = "Orthographic Priming Effect", x = "Quantile", y = "RT (ms)") +
+  scale_x_discrete(limits = c("X1", "X2", "X3", "X4"),labels= QuartileLabels) +
+  Theme_Add
+  
+
+print(OrthRelQ_Plot)
+
+
+SemRelQ_Plot <- ggplot(data = SemRelPlot, aes(x = xvar, y=yvar, group = tvar))+
+  geom_line(aes(linetype=tvar), size=1) +
+  geom_point() +
+  geom_errorbar(aes(ymin=LCL, ymax=UCL), width=.1) +
+  geom_text_repel(aes(label=format(SemRelPlot$yvar, digits=3)),
+                  size = 4, direction = "y", hjust = 2, segment.colour = NA) +
+  labs(title = "Semantic Priming Effect", x = "Quantile", y = "RT (ms)") +
+  scale_x_discrete(limits = c("X1", "X2", "X3", "X4"),labels= QuartileLabels) +
+  Theme_Add
+  
+
+print(SemRelQ_Plot)
+
+ggsave("C:/Users/Alexander/Desktop/MyPlots/Exp1LongSOA_OrthRel.png", plot = OrthRelQ_Plot,scale = 1, width = 16, height = 9, units = c("cm"), dpi = 300, limitsize = TRUE)
+
+ggsave("C:/Users/Alexander/Desktop/MyPlots/Exp1LongSOA_SemRel.png", plot = SemRelQ_Plot,scale = 1, width = 16, height = 9, units = c("cm"), dpi = 300, limitsize = TRUE)
+
+#pdf("C:/Users/Alexander/Desktop/MyPlots/S64_LongSOA_OrthFacil.pdf", width = 12, height = 8)
+#S64_LongSOA_OrthFacil <- grid.arrange(SemRelQ_Plot,OrthRelQ_Plot, ncol=2, nrow=1)
+#dev.off() # Close the file
+
+
+```
+
+
